@@ -32,6 +32,7 @@ from TSPTrainer import TSPTrainer as Trainer
 env_params = {
     'problem_size': 20,
     'pomo_size': 20,
+    'RHQ': 0.5
 }
 
 model_params = {
@@ -43,6 +44,8 @@ model_params = {
     'logit_clipping': 10,
     'ff_hidden_dim': 512,
     'eval_type': 'argmax',
+    'Alpha': 1.0,
+    'Beta': 2.0,
 }
 
 optimizer_params = {
@@ -62,6 +65,7 @@ trainer_params = {
     'epochs': 510,
     'train_episodes': 100 * 1000,
     'train_batch_size': 64,
+    'ants': 30,
     'logging': {
         'model_save_interval': 10,
         'img_save_interval': 10,

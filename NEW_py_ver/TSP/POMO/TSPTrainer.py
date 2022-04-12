@@ -1,4 +1,3 @@
-
 import torch
 from logging import getLogger
 
@@ -56,7 +55,7 @@ class TSPTrainer:
             self.start_epoch = 1 + model_load['epoch']
             self.result_log.set_raw_data(checkpoint['result_log'])
             self.optimizer.load_state_dict(checkpoint['optimizer_state_dict'])
-            self.scheduler.last_epoch = model_load['epoch']-1
+            self.scheduler.last_epoch = model_load['epoch'] - 1
             self.logger.info('Saved Model Loaded !!')
 
         # utility
@@ -64,7 +63,7 @@ class TSPTrainer:
 
     def run(self):
         self.time_estimator.reset(self.start_epoch)
-        for epoch in range(self.start_epoch, self.trainer_params['epochs']+1):
+        for epoch in range(self.start_epoch, self.trainer_params['epochs'] + 1):
             self.logger.info('=================================================================')
 
             # LR Decay
@@ -90,9 +89,9 @@ class TSPTrainer:
                 self.logger.info("Saving log_image")
                 image_prefix = '{}/latest'.format(self.result_folder)
                 util_save_log_image_with_label(image_prefix, self.trainer_params['logging']['log_image_params_1'],
-                                    self.result_log, labels=['train_score'])
+                                               self.result_log, labels=['train_score'])
                 util_save_log_image_with_label(image_prefix, self.trainer_params['logging']['log_image_params_2'],
-                                    self.result_log, labels=['train_loss'])
+                                               self.result_log, labels=['train_loss'])
 
             if all_done or (epoch % model_save_interval) == 0:
                 self.logger.info("Saving trained_model")
@@ -108,9 +107,9 @@ class TSPTrainer:
             if all_done or (epoch % img_save_interval) == 0:
                 image_prefix = '{}/img/checkpoint-{}'.format(self.result_folder, epoch)
                 util_save_log_image_with_label(image_prefix, self.trainer_params['logging']['log_image_params_1'],
-                                    self.result_log, labels=['train_score'])
+                                               self.result_log, labels=['train_score'])
                 util_save_log_image_with_label(image_prefix, self.trainer_params['logging']['log_image_params_2'],
-                                    self.result_log, labels=['train_loss'])
+                                               self.result_log, labels=['train_loss'])
 
             if all_done:
                 self.logger.info(" *** Training Done *** ")
@@ -152,44 +151,45 @@ class TSPTrainer:
         return score_AM.avg, loss_AM.avg
 
     def _train_one_batch(self, batch_size):
+        pheromone = torch.ones(size=(batch_size, self.env.problem_size, self.env.problem_size))
+        for i in range(self.trainer_params['ants']):
+            # Prep
+            ###############################################
+            self.model.train()
+            self.env.load_problems(batch_size,pheromone)
+            reset_state, _, _ = self.env.reset()
+            self.model.pre_forward(reset_state)
 
-        # Prep
-        ###############################################
-        self.model.train()
-        self.env.load_problems(batch_size)
-        reset_state, _, _ = self.env.reset()
-        self.model.pre_forward(reset_state)
+            prob_list = torch.zeros(size=(batch_size, self.env.pomo_size, 0))
+            # shape: (batch, pomo, 0~problem)
 
-        prob_list = torch.zeros(size=(batch_size, self.env.pomo_size, 0))
-        # shape: (batch, pomo, 0~problem)
+            # POMO Rollout
+            ###############################################
+            state, reward, done = self.env.pre_step()
+            while not done:
+                selected, prob = self.model(state)
+                # shape: (batch, pomo)
+                state, reward, done = self.env.step(selected)
+                prob_list = torch.cat((prob_list, prob[:, :, None]), dim=2)
 
-        # POMO Rollout
-        ###############################################
-        state, reward, done = self.env.pre_step()
-        while not done:
-            selected, prob = self.model(state)
+            # Loss
+            ###############################################
+            advantage = reward - reward.float().mean(dim=1, keepdims=True)
             # shape: (batch, pomo)
-            state, reward, done = self.env.step(selected)
-            prob_list = torch.cat((prob_list, prob[:, :, None]), dim=2)
+            log_prob = prob_list.log().sum(dim=2)
+            # size = (batch, pomo)
+            loss = -advantage * log_prob  # Minus Sign: To Increase REWARD
+            # shape: (batch, pomo)
+            loss_mean = loss.mean()
 
-        # Loss
-        ###############################################
-        advantage = reward - reward.float().mean(dim=1, keepdims=True)
-        # shape: (batch, pomo)
-        log_prob = prob_list.log().sum(dim=2)
-        # size = (batch, pomo)
-        loss = -advantage * log_prob  # Minus Sign: To Increase REWARD
-        # shape: (batch, pomo)
-        loss_mean = loss.mean()
+            # Score
+            ###############################################
+            max_pomo_reward, _ = reward.max(dim=1)  # get best results from pomo
+            score_mean = -max_pomo_reward.float().mean()  # negative sign to make positive value
 
-        # Score
-        ###############################################
-        max_pomo_reward, _ = reward.max(dim=1)  # get best results from pomo
-        score_mean = -max_pomo_reward.float().mean()  # negative sign to make positive value
-
-        # Step & Return
-        ###############################################
-        self.model.zero_grad()
-        loss_mean.backward()
-        self.optimizer.step()
+            # Step & Return
+            ###############################################
+            self.model.zero_grad()
+            loss_mean.backward()
+            self.optimizer.step()
         return score_mean.item(), loss_mean.item()

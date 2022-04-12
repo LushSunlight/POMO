@@ -1,4 +1,3 @@
-
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
@@ -23,6 +22,7 @@ class TSPModel(nn.Module):
     def forward(self, state):
         batch_size = state.BATCH_IDX.size(0)
         pomo_size = state.BATCH_IDX.size(1)
+        pheromone = state.pheromone
 
         if state.current_node is None:
             selected = torch.arange(pomo_size)[None, :].expand(batch_size, pomo_size)
@@ -35,7 +35,7 @@ class TSPModel(nn.Module):
         else:
             encoded_last_node = _get_encoding(self.encoded_nodes, state.current_node)
             # shape: (batch, pomo, embedding)
-            probs = self.decoder(encoded_last_node, ninf_mask=state.ninf_mask)
+            probs = self.decoder(encoded_last_node, pheromone, ninf_mask=state.ninf_mask)
             # shape: (batch, pomo, problem)
 
             if self.training or self.model_params['eval_type'] == 'softmax':
@@ -55,7 +55,6 @@ class TSPModel(nn.Module):
                 selected = probs.argmax(dim=2)
                 # shape: (batch, pomo)
                 prob = None
-
 
         return selected, prob
 
@@ -155,6 +154,8 @@ class TSP_Decoder(nn.Module):
         embedding_dim = self.model_params['embedding_dim']
         head_num = self.model_params['head_num']
         qkv_dim = self.model_params['qkv_dim']
+        Alpha = self.model_params['Alpha']
+        Beta = self.model_params['Beta']
 
         self.Wq_first = nn.Linear(embedding_dim, head_num * qkv_dim, bias=False)
         self.Wq_last = nn.Linear(embedding_dim, head_num * qkv_dim, bias=False)
@@ -185,8 +186,9 @@ class TSP_Decoder(nn.Module):
         self.q_first = reshape_by_heads(self.Wq_first(encoded_q1), head_num=head_num)
         # shape: (batch, head_num, n, qkv_dim)
 
-    def forward(self, encoded_last_node, ninf_mask):
+    def forward(self, encoded_last_node, pheromone, ninf_mask):
         # encoded_last_node.shape: (batch, pomo, embedding)
+        # pheromone.shape: (batch, problem, problem)
         # ninf_mask.shape: (batch, pomo, problem)
 
         head_num = self.model_params['head_num']
@@ -220,7 +222,10 @@ class TSP_Decoder(nn.Module):
 
         score_masked = score_clipped + ninf_mask
 
-        probs = F.softmax(score_masked, dim=2)
+        temp_pheromone = pheromone[:, encoded_last_node, :].reshape(3, 1, 3).expand(-1, 3, -1)
+        phero_score = temp_pheromone ** self.Alpha * score_masked ** self.Beta
+
+        probs = F.softmax(phero_score, dim=2)
         # shape: (batch, pomo, problem)
 
         return probs

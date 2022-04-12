@@ -16,6 +16,8 @@ class Step_State:
     BATCH_IDX: torch.Tensor
     POMO_IDX: torch.Tensor
     # shape: (batch, pomo)
+    pheromone: torch.Tensor
+    # shape: (batch, problem, problem)
     current_node: torch.Tensor = None
     # shape: (batch, pomo)
     ninf_mask: torch.Tensor = None
@@ -27,6 +29,7 @@ class TSPEnv:
 
         # Const @INIT
         ####################################
+        self.pheromone = None
         self.env_params = env_params
         self.problem_size = env_params['problem_size']
         self.pomo_size = env_params['pomo_size']
@@ -48,9 +51,10 @@ class TSPEnv:
         self.selected_node_list = None
         # shape: (batch, pomo, 0~problem)
 
-    def load_problems(self, batch_size, aug_factor=1):
+    def load_problems(self, batch_size, pheromone, aug_factor=1):
         self.batch_size = batch_size
-
+        self.pheromone = pheromone
+        # pheromone.shape: (batch, problem, problem)
         self.problems = get_random_problems(batch_size, self.problem_size)
         # problems.shape: (batch, problem, 2)
         if aug_factor > 1:
@@ -72,7 +76,7 @@ class TSPEnv:
         # shape: (batch, pomo, 0~problem)
 
         # CREATE STEP STATE
-        self.step_state = Step_State(BATCH_IDX=self.BATCH_IDX, POMO_IDX=self.POMO_IDX)
+        self.step_state = Step_State(BATCH_IDX=self.BATCH_IDX, POMO_IDX=self.POMO_IDX, pheromone=self.pheromone)
         self.step_state.ninf_mask = torch.zeros((self.batch_size, self.pomo_size, self.problem_size))
         # shape: (batch, pomo, problem)
 
@@ -124,4 +128,3 @@ class TSPEnv:
         travel_distances = segment_lengths.sum(2)
         # shape: (batch, pomo)
         return travel_distances
-
